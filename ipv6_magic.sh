@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V6.0)
-# 更新：新增安装/卸载交互界面，集成一键清理功能
+# IPv6 /64 AnyIP 配置脚本 (V6.1 随机化验证版)
+# 更新：验证阶段使用随机生成的 IPv6 后缀，避免地址冲突
 # =========================================================
 
 RED='\033[0;31m'
@@ -11,13 +11,13 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
-
+# 1. 检查 Root 权限
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}错误：请使用 root 权限运行此脚本！${PLAIN}"
    exit 1
 fi
 
-
+# ================= 菜单界面 =================
 clear
 echo -e "${YELLOW}==============================================${PLAIN}"
 echo -e "${YELLOW}           欢迎使用 ipv6Anyips 脚本           ${PLAIN}"
@@ -30,11 +30,11 @@ echo ""
 read -p "请输入选项 [1-2]: " choice
 echo ""
 
-
+# ================= 核心安装逻辑 =================
 install_anyip() {
     echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
-
+    # --- 步骤 1: 本地网卡识别 ---
     echo "-> 正在探测主网卡接口..."
     MAIN_IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
 
@@ -59,7 +59,7 @@ install_anyip() {
     fi
     echo "----------------------------------------------------"
 
-
+    # --- 步骤 2: NDP 代理 ---
     echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细追踪)...${PLAIN}"
 
     echo "-> 正在检查 ndppd 软件..."
@@ -103,7 +103,7 @@ CONF
     systemctl enable ndppd >/dev/null 2>&1
     echo -e "${GREEN}   [成功] 已设为开机自启${PLAIN}"
 
-
+    # --- 步骤 3: 路由服务 ---
     echo -e "\n${YELLOW}>>> [3/4] 配置路由服务 (详细追踪)...${PLAIN}"
 
     SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
@@ -142,10 +142,15 @@ SERVICE
         exit 1
     fi
 
-
+    # --- 步骤 4: 验证 ---
     echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
-    TEST_IP="${IPV6_PREFIX}::1234"
-    echo "Ping测试目标: $TEST_IP"
+    
+    # === 新增：生成随机 16 进制后缀 (避免 1234 冲突) ===
+    # $RANDOM 范围 0-32767，转为 16 进制
+    RAND_SUFFIX=$(printf '%x' $((RANDOM + 1)))
+    TEST_IP="${IPV6_PREFIX}::${RAND_SUFFIX}"
+    
+    echo "Ping测试目标 (随机生成): $TEST_IP"
     echo "----------------------------------------------------"
 
     if ping6 -c 1 -w 2 2001:4860:4860::8888 > /dev/null 2>&1; then
@@ -180,7 +185,7 @@ SERVICE
     fi
 }
 
-
+# ================= 卸载逻辑 =================
 uninstall_anyip() {
     echo -e "${YELLOW}>>> 正在执行卸载操作...${PLAIN}"
 
@@ -205,7 +210,7 @@ uninstall_anyip() {
     echo ""
 }
 
-
+# ================= 逻辑分支 =================
 case "$choice" in
     1)
         install_anyip
