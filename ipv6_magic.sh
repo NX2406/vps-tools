@@ -206,7 +206,7 @@ uninstall_anyip() {
     
     echo "----------------------------------------------------"
     echo -e "${GREEN}卸载完成！所有相关配置和服务已清理干净。${PLAIN}"
-    echo -e "${YELLOW}提示：已安装的 'ndppd' 软件包依然保留，如需彻底删除请手动运行: apt-get remove ndppd${PLAIN}"
+    echo -e "${YELLOW}提示：已安装的 'ndppd' 软件包依然保留，如需彻底删除请手动运行: apt-get remove ndppd -y${PLAIN}"
     echo ""
 }
 
