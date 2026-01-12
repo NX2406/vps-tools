@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V4.5 执笔·抒情 )
+# IPv6 /64 AnyIP 配置脚本 (V4.7 智能检测版)
+# 更新内容：Ping次数改为5次 | 新增本地IPv6环境预检功能
 # =========================================================
 
 RED='\033[0;31m'
@@ -10,10 +11,10 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
+# 0. 版本提示
+echo -e "${YELLOW}>>> 正在运行 V4.7 智能检测版...${PLAIN}"
 
-echo -e "${YELLOW}>>> 正在运行 V4.5 ...${PLAIN}"
-
-
+# 1. 检查 Root 权限
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}错误：请使用 root 权限运行此脚本！${PLAIN}"
    exit 1
@@ -21,7 +22,7 @@ fi
 
 echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
-
+# 2. 核心功能：识别网卡和网段
 MAIN_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
 RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
 
@@ -57,6 +58,7 @@ CONF
 systemctl restart ndppd
 systemctl enable ndppd
 
+# 4. 配置 Systemd
 echo -e "\n${YELLOW}>>> [3/4] 配置路由服务...${PLAIN}"
 
 cat > /etc/systemd/system/ipv6-anyip.service <<SERVICE
@@ -78,32 +80,47 @@ systemctl daemon-reload
 systemctl enable ipv6-anyip.service
 systemctl start ipv6-anyip.service
 
-
+# 5. 验证 (新增：环境预检 + 5次Ping)
 echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
 echo "Ping测试目标: $TEST_IP"
+echo "----------------------------------------------------"
 
-
-ping6 -c 4 $TEST_IP > /dev/null 2>&1
-
-
-if [ $? -eq 0 ]; then
-    echo ""
-    echo -e "${GREEN}=========================================${PLAIN}"
-    echo -e "${GREEN}      恭喜！脚本执行成功 (Exit 0)        ${PLAIN}"
-    echo -e "${GREEN}      逻辑检测通过：网络已连通           ${PLAIN}"
-    echo -e "${GREEN}=========================================${PLAIN}"
+# === 新增：检测本地 IPv6 连通性 (Ping Google DNS) ===
+if ping6 -c 1 -w 2 2001:4860:4860::8888 > /dev/null 2>&1; then
+    # 情况 A：本地环境正常
+    echo -e "${GREEN}本地v6网络正常，开始ping...${PLAIN}"
+    echo "----------------------------------------------------"
     
+    # 执行验证 Ping (改为 5 次)
+    ping6 -c 5 $TEST_IP
 
-    echo ""
-    echo -e "${BLUE}everything by 執筆·抒情${PLAIN}"
-    echo ""
-    exit 0
+    # 获取结果状态
+    if [ $? -eq 0 ]; then
+        echo "----------------------------------------------------"
+        echo -e "${GREEN}=========================================${PLAIN}"
+        echo -e "${GREEN}      恭喜！脚本执行成功 (Exit 0)        ${PLAIN}"
+        echo -e "${GREEN}      逻辑检测通过：网络已连通           ${PLAIN}"
+        echo -e "${GREEN}=========================================${PLAIN}"
+        
+        # === 你的版权声明 ===
+        echo ""
+        echo -e "${BLUE}everything by 執筆·抒情${PLAIN}"
+        echo ""
+        exit 0
+    else
+        echo "----------------------------------------------------"
+        echo -e "${RED}=========================================${PLAIN}"
+        echo -e "${RED}      警告：脚本执行完成但测试失败       ${PLAIN}"
+        echo -e "${RED}      逻辑检测未通过：Ping 不通          ${PLAIN}"
+        echo -e "${RED}=========================================${PLAIN}"
+        exit 1
+    fi
+
 else
-    echo ""
-    echo -e "${RED}=========================================${PLAIN}"
-    echo -e "${RED}      警告：脚本执行完成但测试失败       ${PLAIN}"
-    echo -e "${RED}      逻辑检测未通过：Ping 不通          ${PLAIN}"
-    echo -e "${RED}=========================================${PLAIN}"
-    exit 1
+    # 情况 B：本地无 IPv6 环境
+    echo -e "${YELLOW}本地无v6环境，请开启v6访问或连接手机热点后自行验证${PLAIN}"
+    echo "----------------------------------------------------"
+    # 正常结束
+    exit 0
 fi
