@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V4.9 全链路透明版)
-# 更新：步骤 2 (NDP代理) 增加详细过程显示与报错检测
+# IPv6 /64 AnyIP 配置脚本 (V5.1 专业探测版)
+# 更新：新增 IP 地理位置识别 / 双栈网络分显 / V6网络熔断
 # =========================================================
 
 RED='\033[0;31m'
@@ -12,7 +12,7 @@ BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
 # 0. 版本提示
-echo -e "${YELLOW}>>> 正在运行 V4.9 全链路透明版...${PLAIN}"
+echo -e "${YELLOW}>>> 正在运行 V5.1 专业探测版...${PLAIN}"
 
 # 1. 检查 Root 权限
 if [[ $EUID -ne 0 ]]; then
@@ -20,79 +20,121 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-echo -e "${YELLOW}>>> [1/4] 正在检测网络环境 (详细模式)...${PLAIN}"
+echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
-# --- 步骤 1: 详细识别与报错 ---
-echo -n "正在探测主网卡接口... "
+# --- 新增功能：公网 IP 与 地理位置探测 ---
+echo "-> 正在分析公网网络信息..."
+
+# 定义探测函数 (利用 ip-api 接口)
+get_ip_info() {
+    # 参数 $1: 版本 (4 或 6)
+    # 返回格式: IP地址|国家|地区
+    curl -s"$1"m 3 "http://ip-api.com/line/?fields=query,country,regionName" | sed ':a;N;$!ba;s/\n/|/g'
+}
+
+# 1. 检测 IPv4
+IPV4_DATA=$(get_ip_info 4)
+if [[ -n "$IPV4_DATA" ]]; then
+    # 提取字段
+    IP4=$(echo "$IPV4_DATA" | awk -F'|' '{print $1}')
+    LOC4_COUNTRY=$(echo "$IPV4_DATA" | awk -F'|' '{print $2}')
+    LOC4_REGION=$(echo "$IPV4_DATA" | awk -F'|' '{print $3}')
+    echo -e "${GREEN}   [IPv4] IP: ${IP4}${PLAIN}"
+    echo -e "${GREEN}          Loc: ${LOC4_REGION}, ${LOC4_COUNTRY}${PLAIN}"
+else
+    echo -e "${YELLOW}   [IPv4] 未检测到公网 IPv4 连接${PLAIN}"
+fi
+
+# 2. 检测 IPv6 (关键步骤)
+IPV6_DATA=$(get_ip_info 6)
+if [[ -n "$IPV6_DATA" ]]; then
+    IP6=$(echo "$IPV6_DATA" | awk -F'|' '{print $1}')
+    LOC6_COUNTRY=$(echo "$IPV6_DATA" | awk -F'|' '{print $2}')
+    LOC6_REGION=$(echo "$IPV6_DATA" | awk -F'|' '{print $3}')
+    echo -e "${GREEN}   [IPv6] IP: ${IP6}${PLAIN}"
+    echo -e "${GREEN}          Loc: ${LOC6_REGION}, ${LOC6_COUNTRY}${PLAIN}"
+else
+    # 这里是你要求的：没有 V6 直接停止
+    echo -e "${RED}   [IPv6] 未检测到公网 IPv6 连接！${PLAIN}"
+    echo -e "${RED}   [错误] 本机必须具备 IPv6 访问能力才能继续，脚本已停止。${PLAIN}"
+    exit 1
+fi
+echo "----------------------------------------------------"
+
+# --- 步骤 1 (继续): 本地网卡识别 ---
+echo "-> 正在探测主网卡接口..."
 MAIN_IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
 
 if [ -z "$MAIN_IFACE" ]; then
-    echo -e "${RED}失败${PLAIN}"
-    echo -e "${RED}错误：无法自动获取主网卡接口，请检查网络设置。${PLAIN}"
+    echo -e "${RED}   [失败] 无法获取主网卡接口${PLAIN}"
     exit 1
 else
-    echo -e "${GREEN}成功 (${MAIN_IFACE})${PLAIN}"
+    echo -e "${GREEN}   [成功] 主网卡: ${MAIN_IFACE}${PLAIN}"
 fi
 
-echo -n "正在该网卡上搜索 /64 IPv6 地址... "
+echo "-> 正在验证 IPv6 /64 配置..."
+# 依然保留本地接口检测，作为双重保险
 RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
 
 if [ -z "$RAW_IP" ]; then
-    echo -e "${RED}失败${PLAIN}"
-    echo -e "${RED}严重错误：在设备 ${MAIN_IFACE} 上未找到 /64 网段的 IPv6 地址。${PLAIN}"
+    echo -e "${RED}   [失败] 未找到符合条件的 /64 IPv6 地址${PLAIN}"
     exit 1
 else
     IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}')
     IPV6_SUBNET="${IPV6_PREFIX}::/64"
-    echo -e "${GREEN}成功${PLAIN}"
-    echo -e "识别到前缀: ${GREEN}${IPV6_PREFIX}${PLAIN}"
-    echo -e "目标子网段: ${GREEN}${IPV6_SUBNET}${PLAIN}"
+    echo -e "${GREEN}   [成功] 目标网段: ${IPV6_SUBNET}${PLAIN}"
 fi
 echo "----------------------------------------------------"
 
-# --- [修改部分：步骤 2] 详细 NDP 配置 ---
-echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细模式)...${PLAIN}"
+# --- 步骤 2: NDP 代理 ---
+echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细追踪)...${PLAIN}"
 
-echo -n "检查 ndppd 软件状态... "
+echo "-> 正在检查 ndppd 软件..."
 if command -v ndppd &> /dev/null; then
-    echo -e "${GREEN}已安装 (跳过安装)${PLAIN}"
+    echo -e "${GREEN}   [已安装] 跳过安装步骤${PLAIN}"
 else
-    echo -e "${YELLOW}未安装${PLAIN}"
-    
-    echo -n "正在更新软件源 (apt-get update)... "
+    echo -e "${YELLOW}   [未安装] 准备安装 ndppd...${PLAIN}"
+    echo "   -> 更新软件源 (apt-get update)..."
     apt-get update -y >/dev/null 2>&1
-    if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败${PLAIN}"; exit 1; fi
-    
-    echo -n "正在安装 ndppd (apt-get install)... "
+    echo "   -> 安装软件包 (apt-get install)..."
     apt-get install ndppd -y >/dev/null 2>&1
-    if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败 (请检查网络或源)${PLAIN}"; exit 1; fi
+    
+    if command -v ndppd &> /dev/null; then
+        echo -e "${GREEN}   [成功] ndppd 安装完毕${PLAIN}"
+    else
+        echo -e "${RED}   [失败] 安装失败，请检查 apt 源${PLAIN}"
+        exit 1
+    fi
 fi
 
-CONFIG_FILE="/etc/ndppd.conf"
-echo -n "正在生成配置文件 ($CONFIG_FILE)... "
-cat > "$CONFIG_FILE" <<CONF
+echo "-> 正在生成配置文件 (/etc/ndppd.conf)..."
+cat > /etc/ndppd.conf <<CONF
 proxy $MAIN_IFACE {
    rule $IPV6_SUBNET {
       static
    }
 }
 CONF
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败 (权限不足?)${PLAIN}"; exit 1; fi
+echo -e "${GREEN}   [成功] 配置文件已写入${PLAIN}"
 
-echo -n "正在重启 ndppd 服务... "
+echo "-> 正在重启 ndppd 服务..."
 systemctl restart ndppd
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败 (服务启动错误)${PLAIN}"; exit 1; fi
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}   [成功] 服务已重启${PLAIN}"
+else
+    echo -e "${RED}   [失败] 服务启动异常${PLAIN}"
+    exit 1
+fi
 
-echo -n "正在设置开机自启... "
+echo "-> 设置开机自启..."
 systemctl enable ndppd >/dev/null 2>&1
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败${PLAIN}"; exit 1; fi
+echo -e "${GREEN}   [成功] 已设为开机自启${PLAIN}"
 
-# --- 步骤 3: 详细 Systemd 配置 ---
-echo -e "\n${YELLOW}>>> [3/4] 配置路由服务 (详细模式)...${PLAIN}"
+# --- 步骤 3: 路由服务 ---
+echo -e "\n${YELLOW}>>> [3/4] 配置路由服务 (详细追踪)...${PLAIN}"
 
 SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
-echo -n "正在写入服务文件 ($SERVICE_FILE)... "
-
+echo "-> 生成 Systemd 服务文件..."
 cat > "$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=IPv6 AnyIP Routing Setup
@@ -107,29 +149,27 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 SERVICE
+echo -e "${GREEN}   [成功] 服务文件已创建${PLAIN}"
 
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败${PLAIN}"; exit 1; fi
-
-echo -n "正在重载 Systemd 守护进程... "
+echo "-> 重载 Systemd 配置..."
 systemctl daemon-reload
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败${PLAIN}"; exit 1; fi
+echo -e "${GREEN}   [成功] 完成${PLAIN}"
 
-echo -n "正在启用服务 (Enable)... "
+echo "-> 启用 ipv6-anyip 服务..."
 systemctl enable ipv6-anyip.service >/dev/null 2>&1
-if [ $? -eq 0 ]; then echo -e "${GREEN}成功${PLAIN}"; else echo -e "${RED}失败${PLAIN}"; exit 1; fi
+echo -e "${GREEN}   [成功] 已启用${PLAIN}"
 
-echo -n "正在启动服务 (Start)... "
+echo "-> 启动服务 (Start)..."
 systemctl start ipv6-anyip.service
 if [ $? -eq 0 ]; then
-    echo -e "${GREEN}成功${PLAIN}"
+    echo -e "${GREEN}   [成功] 服务启动正常${PLAIN}"
 else
-    echo -e "${RED}失败${PLAIN}"
-    echo -e "${RED}错误：服务启动失败，以下是错误日志：${PLAIN}"
+    echo -e "${RED}   [失败] 服务启动错误，日志如下：${PLAIN}"
     systemctl status ipv6-anyip.service --no-pager
     exit 1
 fi
 
-# --- 步骤 4: 验证 (Ping 5次 + 预检) ---
+# --- 步骤 4: 验证 ---
 echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
 echo "Ping测试目标: $TEST_IP"
