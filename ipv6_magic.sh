@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V5.2 柔性容错版)
-# 更新：修复API误判导致的脚本停止 / 优化IP与地区解析逻辑
+# IPv6 /64 AnyIP 配置脚本 (V5.3 纯净去探测版)
+# 更新：移除外部 IP/位置探测，保留所有核心功能与详细日志
 # =========================================================
 
 RED='\033[0;31m'
@@ -12,7 +12,7 @@ BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
 # 0. 版本提示
-echo -e "${YELLOW}>>> 正在运行 V5.2 柔性容错版...${PLAIN}"
+echo -e "${YELLOW}>>> 正在运行 V5.3 纯净去探测版...${PLAIN}"
 
 # 1. 检查 Root 权限
 if [[ $EUID -ne 0 ]]; then
@@ -22,42 +22,7 @@ fi
 
 echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
-# --- 柔性探测：公网 IP 与 地理位置 ---
-echo "-> 正在分析公网网络信息 (仅供参考)..."
-
-# 定义探测函数 (增加超时容错)
-get_ip_info() {
-    # 请求 query(IP), country(国家), regionName(地区)
-    # 使用 curl -m 2 设置2秒超时，防止卡住
-    curl -s -m 2 "$1" "http://ip-api.com/line/?fields=query,country,regionName"
-}
-
-# 1. 检测 IPv4
-RAW_V4=$(get_ip_info -4)
-if [[ -n "$RAW_V4" ]]; then
-    # 按行读取，确保解析准确
-    IP4=$(echo "$RAW_V4" | sed -n '1p')
-    LOC4_COUNTRY=$(echo "$RAW_V4" | sed -n '2p')
-    LOC4_REGION=$(echo "$RAW_V4" | sed -n '3p')
-    echo -e "${GREEN}   [IPv4] IP: ${IP4} (${LOC4_REGION}, ${LOC4_COUNTRY})${PLAIN}"
-else
-    echo -e "${YELLOW}   [IPv4] 外部探测超时 (不影响后续运行)${PLAIN}"
-fi
-
-# 2. 检测 IPv6 (核心修复：失败不退出)
-RAW_V6=$(get_ip_info -6)
-if [[ -n "$RAW_V6" ]]; then
-    IP6=$(echo "$RAW_V6" | sed -n '1p')
-    LOC6_COUNTRY=$(echo "$RAW_V6" | sed -n '2p')
-    LOC6_REGION=$(echo "$RAW_V6" | sed -n '3p')
-    echo -e "${GREEN}   [IPv6] IP: ${IP6} (${LOC6_REGION}, ${LOC6_COUNTRY})${PLAIN}"
-else
-    # 重点：这里只警告，不退出了！
-    echo -e "${YELLOW}   [IPv6] 外部探测超时，切换至本地网卡检测模式...${PLAIN}"
-fi
-echo "----------------------------------------------------"
-
-# --- 步骤 1 (继续): 本地网卡硬核识别 ---
+# --- 步骤 1: 本地网卡识别 (严格保留) ---
 echo "-> 正在探测主网卡接口..."
 MAIN_IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
 
@@ -68,13 +33,12 @@ else
     echo -e "${GREEN}   [成功] 主网卡: ${MAIN_IFACE}${PLAIN}"
 fi
 
-echo "-> 正在验证 IPv6 /64 配置 (权威检测)..."
-# 依然保留本地接口检测，作为双重保险
+echo "-> 正在验证 IPv6 /64 配置..."
 RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
 
 if [ -z "$RAW_IP" ]; then
     echo -e "${RED}   [失败] 未找到符合条件的 /64 IPv6 地址${PLAIN}"
-    echo -e "${YELLOW}   提示：请确认 VPS商家 已分配 IPv6 且网卡已启用。${PLAIN}"
+    echo -e "${YELLOW}   提示：请确认 VPS 确实分配了 IPv6 且网卡已启用。${PLAIN}"
     exit 1
 else
     IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}')
@@ -83,7 +47,7 @@ else
 fi
 echo "----------------------------------------------------"
 
-# --- 步骤 2: NDP 代理 ---
+# --- 步骤 2: NDP 代理 (严格保留) ---
 echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细追踪)...${PLAIN}"
 
 echo "-> 正在检查 ndppd 软件..."
@@ -127,7 +91,7 @@ echo "-> 设置开机自启..."
 systemctl enable ndppd >/dev/null 2>&1
 echo -e "${GREEN}   [成功] 已设为开机自启${PLAIN}"
 
-# --- 步骤 3: 路由服务 ---
+# --- 步骤 3: 路由服务 (严格保留) ---
 echo -e "\n${YELLOW}>>> [3/4] 配置路由服务 (详细追踪)...${PLAIN}"
 
 SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
@@ -166,12 +130,13 @@ else
     exit 1
 fi
 
-# --- 步骤 4: 验证 ---
+# --- 步骤 4: 验证 (严格保留：5次Ping + 逻辑判断) ---
 echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
 echo "Ping测试目标: $TEST_IP"
 echo "----------------------------------------------------"
 
+# 这里依然保留“环境预检”，防止本机断网导致误判
 if ping6 -c 1 -w 2 2001:4860:4860::8888 > /dev/null 2>&1; then
     echo -e "${GREEN}本地v6网络正常，开始ping...${PLAIN}"
     echo "----------------------------------------------------"
