@@ -15,4 +15,4 @@
 直接在终端执行以下命令即可：
 
 ```bash
-bash <(curl -sL [https://raw.githubusercontent.com/NX2406/vps-tools/main/ipv6_magic.sh](https://raw.githubusercontent.com/NX2406/vps-tools/main/ipv6_magic.sh))
+bash <(curl -sL https://raw.githubusercontent.com/NX2406/vps-tools/main/ipv6_magic.sh)
