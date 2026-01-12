@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP & NDP Proxy 配置脚本
-# 版本：V4.0 (纯净稳定版) - 移除所有自动更新逻辑
+# IPv6 /64 AnyIP 配置脚本 (V4.1 透明版)
+# 特性：显示详细的安装、配置和验证过程日志
 # =========================================================
 
 RED='\033[0;31m'
@@ -16,11 +16,10 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-echo -e "${YELLOW}>>> 正在检测网络环境...${PLAIN}"
+echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
 # 2. 核心功能：识别网卡和网段
 MAIN_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
-# 使用最通用的 cut 命令提取 IP，避免 grep 兼容性问题
 RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
 
 if [ -z "$RAW_IP" ]; then
@@ -33,14 +32,21 @@ IPV6_SUBNET="${IPV6_PREFIX}::/64"
 
 echo -e "检测到网卡: ${GREEN}${MAIN_IFACE}${PLAIN}"
 echo -e "检测到网段: ${GREEN}${IPV6_SUBNET}${PLAIN}"
+echo "----------------------------------------------------"
 
-# 3. 配置 NDPPD (解决断流)
-echo -e "${YELLOW}>>> 配置 NDP 代理...${PLAIN}"
+# 3. 配置 NDPPD (不再静默安装)
+echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (ndppd)...${PLAIN}"
+
 if ! command -v ndppd &> /dev/null; then
-    apt-get update -y > /dev/null 2>&1
-    apt-get install ndppd -y > /dev/null 2>&1
+    echo "正在安装 ndppd 软件包..."
+    # 移除 > /dev/null，显示安装过程
+    apt-get update -y
+    apt-get install ndppd -y
+else
+    echo "ndppd 已安装，跳过安装步骤。"
 fi
 
+echo "正在生成 ndppd 配置文件..."
 cat > /etc/ndppd.conf <<CONF
 proxy $MAIN_IFACE {
    rule $IPV6_SUBNET {
@@ -49,11 +55,13 @@ proxy $MAIN_IFACE {
 }
 CONF
 
+echo "正在启动 ndppd 服务..."
 systemctl restart ndppd
-systemctl enable ndppd > /dev/null 2>&1
+# 移除 > /dev/null，显示服务启用状态
+systemctl enable ndppd 
 
 # 4. 配置 Systemd (持久化路由)
-echo -e "${YELLOW}>>> 配置路由服务...${PLAIN}"
+echo -e "\n${YELLOW}>>> [3/4] 配置路由持久化服务...${PLAIN}"
 
 cat > /etc/systemd/system/ipv6-anyip.service <<SERVICE
 [Unit]
@@ -70,18 +78,22 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 SERVICE
 
+echo "正在刷新 Systemd 守护进程..."
 systemctl daemon-reload
-systemctl enable ipv6-anyip.service > /dev/null 2>&1
+echo "正在启用 ipv6-anyip 服务..."
+systemctl enable ipv6-anyip.service
+echo "正在启动服务..."
 systemctl start ipv6-anyip.service
 
-# 5. 验证
-echo -e "${YELLOW}>>> 正在验证...${PLAIN}"
+# 5. 验证 (显示 Ping 详细过程)
+echo -e "\n${YELLOW}>>> [4/4] 正在验证 (Ping 测试)...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
+echo -e "目标测试 IP: ${GREEN}${TEST_IP}${PLAIN}"
+echo "----------------------------------------------------"
 
-if ping6 -c 2 -w 2 $TEST_IP &> /dev/null; then
-    echo -e "${GREEN}=========================================${PLAIN}"
-    echo -e "${GREEN}       配置成功！系统已恢复正常。       ${PLAIN}"
-    echo -e "${GREEN}=========================================${PLAIN}"
-else
-    echo -e "${RED}测试未通过，但服务已安装。${PLAIN}"
-fi
+# 直接运行 ping，不隐藏输出
+ping6 -c 4 $TEST_IP
+
+# 检查上一条命令(ping)的退出状态码
+if [ $? -eq 0 ]; then
+    echo "
