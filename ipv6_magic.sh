@@ -1,4 +1,3 @@
-cat > ipv6_magic.sh << 'EOF'
 #!/bin/bash
 
 # =========================================================
@@ -148,4 +147,3 @@ else
     echo -e "${RED}测试失败。请检查 ip -6 route 或防火墙设置。${PLAIN}"
     ip -6 route | grep "$IPV6_PREFIX"
 fi
-EOF
