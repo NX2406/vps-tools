@@ -61,7 +61,7 @@ install_anyip() {
     echo "----------------------------------------------------"
 
 
-    echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细追踪)...${PLAIN}"
+    echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理...${PLAIN}"
 
     echo "-> 正在检查 ndppd 软件..."
     if command -v ndppd &> /dev/null; then
@@ -105,7 +105,7 @@ CONF
     echo -e "${GREEN}   [成功] 已设为开机自启${PLAIN}"
 
 
-    echo -e "\n${YELLOW}>>> [3/4] 配置路由服务 (详细追踪)...${PLAIN}"
+    echo -e "\n${YELLOW}>>> [3/4] 配置路由服务...${PLAIN}"
 
     SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
     echo "-> 生成 Systemd 服务文件..."
