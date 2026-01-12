@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V4.1 透明版)
-# 特性：显示详细的安装、配置和验证过程日志
+# IPv6 /64 AnyIP 配置脚本 (V4.2 最终修正版)
 # =========================================================
 
 RED='\033[0;31m'
@@ -34,19 +33,15 @@ echo -e "检测到网卡: ${GREEN}${MAIN_IFACE}${PLAIN}"
 echo -e "检测到网段: ${GREEN}${IPV6_SUBNET}${PLAIN}"
 echo "----------------------------------------------------"
 
-# 3. 配置 NDPPD (不再静默安装)
-echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (ndppd)...${PLAIN}"
+# 3. 配置 NDPPD
+echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理...${PLAIN}"
 
 if ! command -v ndppd &> /dev/null; then
-    echo "正在安装 ndppd 软件包..."
-    # 移除 > /dev/null，显示安装过程
+    echo "正在安装 ndppd..."
     apt-get update -y
     apt-get install ndppd -y
-else
-    echo "ndppd 已安装，跳过安装步骤。"
 fi
 
-echo "正在生成 ndppd 配置文件..."
 cat > /etc/ndppd.conf <<CONF
 proxy $MAIN_IFACE {
    rule $IPV6_SUBNET {
@@ -55,13 +50,11 @@ proxy $MAIN_IFACE {
 }
 CONF
 
-echo "正在启动 ndppd 服务..."
 systemctl restart ndppd
-# 移除 > /dev/null，显示服务启用状态
-systemctl enable ndppd 
+systemctl enable ndppd
 
-# 4. 配置 Systemd (持久化路由)
-echo -e "\n${YELLOW}>>> [3/4] 配置路由持久化服务...${PLAIN}"
+# 4. 配置 Systemd
+echo -e "\n${YELLOW}>>> [3/4] 配置路由服务...${PLAIN}"
 
 cat > /etc/systemd/system/ipv6-anyip.service <<SERVICE
 [Unit]
@@ -78,22 +71,22 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 SERVICE
 
-echo "正在刷新 Systemd 守护进程..."
 systemctl daemon-reload
-echo "正在启用 ipv6-anyip 服务..."
 systemctl enable ipv6-anyip.service
-echo "正在启动服务..."
 systemctl start ipv6-anyip.service
 
-# 5. 验证 (显示 Ping 详细过程)
-echo -e "\n${YELLOW}>>> [4/4] 正在验证 (Ping 测试)...${PLAIN}"
+# 5. 验证 (简化输出以避免语法错误)
+echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
-echo -e "目标测试 IP: ${GREEN}${TEST_IP}${PLAIN}"
-echo "----------------------------------------------------"
+echo "Ping测试目标: $TEST_IP"
 
-# 直接运行 ping，不隐藏输出
 ping6 -c 4 $TEST_IP
 
-# 检查上一条命令(ping)的退出状态码
 if [ $? -eq 0 ]; then
-    echo "
+    echo ""
+    echo -e "${GREEN}SUCCESS! 配置成功。${PLAIN}"
+    echo -e "${GREEN}你现在可以使用网段内的任意 IP 了。${PLAIN}"
+else
+    echo ""
+    echo -e "${RED}测试失败，请检查报错。${PLAIN}"
+fi
