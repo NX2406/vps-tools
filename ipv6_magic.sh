@@ -11,7 +11,7 @@ cat > ipv6_magic.sh << 'EOF'
 CURRENT_VERSION="3.0"
 # 请将下面的链接替换为你 GitHub 仓库里该脚本的【Raw】直链
 # 例如: https://raw.githubusercontent.com/你的名字/仓库/main/ipv6_magic.sh
-UPDATE_URL="https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/ipv6_magic.sh"
+UPDATE_URL="https://raw.githubusercontent.com/NX2406/vps-tools/main/ipv6_magic.sh"
 # -----------------------------
 
 RED='\033[0;31m'
