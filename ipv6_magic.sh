@@ -1,18 +1,19 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V4.4 逻辑增强版)
+# IPv6 /64 AnyIP 配置脚本 (V4.5 执笔·抒情 )
 # =========================================================
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
-# 0. 版本自检 (用于确认是否拉取到了最新版)
-echo -e "${YELLOW}>>> 正在运行 V4.4 逻辑增强版...${PLAIN}"
 
-# 1. 检查 Root 权限
+echo -e "${YELLOW}>>> 正在运行 V4.5 ...${PLAIN}"
+
+
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}错误：请使用 root 权限运行此脚本！${PLAIN}"
    exit 1
@@ -20,7 +21,7 @@ fi
 
 echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
-# 2. 核心功能：识别网卡和网段
+
 MAIN_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
 RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
 
@@ -56,7 +57,6 @@ CONF
 systemctl restart ndppd
 systemctl enable ndppd
 
-# 4. 配置 Systemd
 echo -e "\n${YELLOW}>>> [3/4] 配置路由服务...${PLAIN}"
 
 cat > /etc/systemd/system/ipv6-anyip.service <<SERVICE
@@ -78,21 +78,27 @@ systemctl daemon-reload
 systemctl enable ipv6-anyip.service
 systemctl start ipv6-anyip.service
 
-# 5. 验证 (包含你要求的逻辑判断)
+
 echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
 TEST_IP="${IPV6_PREFIX}::1234"
 echo "Ping测试目标: $TEST_IP"
 
-# 运行 ping，并屏蔽错误输出，只看结果
-ping6 -c 4 $TEST_IP
 
-# === 核心逻辑判断 ===
+ping6 -c 4 $TEST_IP > /dev/null 2>&1
+
+
 if [ $? -eq 0 ]; then
     echo ""
     echo -e "${GREEN}=========================================${PLAIN}"
     echo -e "${GREEN}      恭喜！脚本执行成功 (Exit 0)        ${PLAIN}"
     echo -e "${GREEN}      逻辑检测通过：网络已连通           ${PLAIN}"
     echo -e "${GREEN}=========================================${PLAIN}"
+    
+
+    echo ""
+    echo -e "${BLUE}everything by 執筆·抒情${PLAIN}"
+    echo ""
+    exit 0
 else
     echo ""
     echo -e "${RED}=========================================${PLAIN}"
