@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V7.4 逻辑闭环版)
-# 更新：修复救砖模式下临时 IP 与服务启动冲突的问题 (Address already assigned)
+# IPv6 /64 AnyIP 配置脚本 (V7.5 最终大结局版)
+# 更新：在服务启动后增加 5秒 等待，彻底解决验证阶段的假死报错
 # =========================================================
 
 RED='\033[0;31m'
@@ -197,8 +197,6 @@ SERVICE
     echo "-> 启动服务 (Start)..."
     
     # === 核心修复 V7.4: 临时 IP 撤销逻辑 ===
-    # 在启动 Systemd 服务前，必须把刚才脚本手动绑定的 IP 删掉
-    # 否则 Systemd 执行 "ip addr add" 时会因为 IP 已存在而报错退出
     if [ "$MANUAL_BIND" == "yes" ]; then
         echo -e "${YELLOW}   [处理] 正在移交 IP 管理权给 Systemd...${PLAIN}"
         ip -6 addr del "${RAW_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
@@ -212,6 +210,10 @@ SERVICE
         systemctl status ipv6-anyip.service --no-pager
         exit 1
     fi
+
+    # === 核心修复 V7.5: 服务启动后的缓冲等待 ===
+    echo -e "${YELLOW}   [等待] 正在等待服务网络生效 (5秒)...${PLAIN}"
+    sleep 5
 
     echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
     
