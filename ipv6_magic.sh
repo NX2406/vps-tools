@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V7.1 智能输入容错版)
-# 更新：修复手动绑定时输入完整 IP 导致的格式拼接错误
+# IPv6 /64 AnyIP 配置脚本 (V7.2 紧急修复版)
+# 更新：修复 V7.1 中 HereDoc 结束符缩进导致的语法错误
 # =========================================================
 
 RED='\033[0;31m'
@@ -55,7 +55,6 @@ install_anyip() {
         echo -e "   (例如: 2605:xx:4:: 或 2605:xx:4::1 均可)"
         read -p "   输入: " USER_PREFIX_INPUT
         
-        # === 核心修复 V7.1: 智能输入处理 ===
         # 1. 去除 /64 后缀和空格
         USER_INPUT_CLEAN=$(echo "$USER_PREFIX_INPUT" | cut -d'/' -f1 | tr -d ' ')
         
@@ -66,15 +65,13 @@ install_anyip() {
 
         echo "-> 正在尝试临时绑定并测试连通性..."
         
-        # 逻辑分支：智能判断绑定方式
-        # 尝试直接绑定用户输入的地址（假设是完整 IP 或以 :: 结尾的）
+        # 尝试直接绑定
         TEST_BIND_IP="$USER_INPUT_CLEAN"
         ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
         
-        # 如果上一步失败（状态码非0），说明格式不对（可能是纯前缀 2602:xx:4 没加冒号）
+        # 如果失败，尝试补全 ::1
         if [ $? -ne 0 ]; then
              echo -e "${YELLOW}   [提示] 尝试自动补全 IP 格式...${PLAIN}"
-             # 尝试补全 ::1
              TEST_BIND_IP="${USER_INPUT_CLEAN}::1"
              ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
              
@@ -87,20 +84,17 @@ install_anyip() {
         # 验证是否通畅
         if ping6 -c 2 -w 2 2001:4860:4860::8888 >/dev/null 2>&1; then
              echo -e "${GREEN}   [成功] 绑定成功且网络已连通！${PLAIN}"
-             # 将绑定成功的这个 IP 赋值给 RAW_IP，以便后续提取前缀
              RAW_IP="$TEST_BIND_IP"
              MANUAL_BIND="yes"
         else
              echo -e "${RED}   [失败] 绑定后无法连接 IPv6 网络。${PLAIN}"
              echo -e "${RED}   原因可能是：商家未下发网关路由、或防火墙拦截。${PLAIN}"
-             # 回滚操作
              ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
              exit 1
         fi
     fi
 
-    # 标准化前缀提取逻辑 (兼容所有格式)
-    # 使用 sed 's/:*$//' 确保去除末尾冒号
+    # 标准化前缀提取逻辑
     IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}' | sed 's/:*$//')
     IPV6_SUBNET="${IPV6_PREFIX}::/64"
     echo -e "${GREEN}   [成功] 目标网段: ${IPV6_SUBNET}${PLAIN}"
@@ -127,7 +121,8 @@ install_anyip() {
     fi
 
     echo "-> 正在生成配置文件 (/etc/ndppd.conf)..."
-    cat > /etc/ndppd.conf <<CONF
+    # 注意：下面的 CONF 必须顶格写，不能缩进！
+cat > /etc/ndppd.conf <<CONF
 proxy $MAIN_IFACE {
    rule $IPV6_SUBNET {
       static
@@ -154,15 +149,14 @@ CONF
     SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
     echo "-> 生成 Systemd 服务文件..."
     
-    # === 构建服务文件 ===
     BIND_CMD=""
     if [ "$MANUAL_BIND" == "yes" ]; then
-        # 这里的 ${RAW_IP} 是刚才验证成功的那个完整 IP
         BIND_CMD="ExecStart=/sbin/ip addr add ${RAW_IP}/64 dev ${MAIN_IFACE}"
         echo -e "${BLUE}   [提示] 已将救砖 IP (${RAW_IP}) 加入开机自启${PLAIN}"
     fi
 
-    cat > "$SERVICE_FILE" <<SERVICE
+    # 注意：下面的 SERVICE 必须顶格写，不能缩进！
+cat > "$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=IPv6 AnyIP Routing Setup
 After=network.target ndppd.service
