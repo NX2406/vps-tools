@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V7.3 DAD热身修复版)
-# 更新：增加绑定后的 DAD 等待时间，修复因检测太快导致的 Ping 失败
+# IPv6 /64 AnyIP 配置脚本 (V7.4 逻辑闭环版)
+# 更新：修复救砖模式下临时 IP 与服务启动冲突的问题 (Address already assigned)
 # =========================================================
 
 RED='\033[0;31m'
@@ -55,7 +55,7 @@ install_anyip() {
         echo -e "   (例如: 2605:xx:4:: 或 2605:xx:4::1 均可)"
         read -p "   输入: " USER_PREFIX_INPUT
         
-        # 1. 清洗输入：去除 /64 后缀和空格
+        # 1. 清洗输入
         USER_INPUT_CLEAN=$(echo "$USER_PREFIX_INPUT" | cut -d'/' -f1 | tr -d ' ')
         
         if [ -z "$USER_INPUT_CLEAN" ]; then
@@ -66,22 +66,20 @@ install_anyip() {
         echo "-> 正在尝试临时绑定并测试连通性..."
         
         # 2. 智能构建测试 IP
-        # 如果输入以 ":" 结尾 (是前缀)，则补全 "1"
-        # 如果输入看起来是完整 IP (如 ...:62:b20)，则直接用
         if [[ "$USER_INPUT_CLEAN" == *":" ]]; then
             TEST_BIND_IP="${USER_INPUT_CLEAN}1"
         else
             TEST_BIND_IP="$USER_INPUT_CLEAN"
         fi
 
-        # 3. 防冲突处理：先尝试删除这个 IP (防止重复运行报错)
+        # 3. 防冲突处理
         ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
         
         # 4. 执行绑定
         ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
         
         if [ $? -ne 0 ]; then
-             # 如果直接绑定失败，尝试补救 (可能是没加 ::1)
+             # 补救尝试
              if [[ "$USER_INPUT_CLEAN" != *":" ]]; then
                  echo -e "${YELLOW}   [提示] 尝试自动补全后缀...${PLAIN}"
                  TEST_BIND_IP="${USER_INPUT_CLEAN}::1"
@@ -95,7 +93,6 @@ install_anyip() {
              fi
         fi
         
-        # === 核心修复 V7.3: 等待 DAD (地址重复检测) 完成 ===
         echo -e "${YELLOW}   [等待] 正在等待 IPv6 地址生效 (3秒)...${PLAIN}"
         sleep 3
         
@@ -106,8 +103,7 @@ install_anyip() {
              MANUAL_BIND="yes"
         else
              echo -e "${RED}   [失败] 绑定后无法连接 IPv6 网络。${PLAIN}"
-             echo -e "${RED}   原因可能是：商家未下发网关路由、或防火墙拦截。${PLAIN}"
-             # 回滚：删除无效 IP
+             # 回滚
              ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
              exit 1
         fi
@@ -199,6 +195,15 @@ SERVICE
     echo -e "${GREEN}   [成功] 已启用${PLAIN}"
 
     echo "-> 启动服务 (Start)..."
+    
+    # === 核心修复 V7.4: 临时 IP 撤销逻辑 ===
+    # 在启动 Systemd 服务前，必须把刚才脚本手动绑定的 IP 删掉
+    # 否则 Systemd 执行 "ip addr add" 时会因为 IP 已存在而报错退出
+    if [ "$MANUAL_BIND" == "yes" ]; then
+        echo -e "${YELLOW}   [处理] 正在移交 IP 管理权给 Systemd...${PLAIN}"
+        ip -6 addr del "${RAW_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
+    fi
+
     systemctl start ipv6-anyip.service
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}   [成功] 服务启动正常${PLAIN}"
