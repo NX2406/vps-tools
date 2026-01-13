@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V7.5 最终大结局版)
-# 更新：在服务启动后增加 5秒 等待，彻底解决验证阶段的假死报错
+# IPv6 /64 AnyIP 配置脚本 (V7.6 系统预检增强版)
+# 更新：新增系统类型检测与依赖环境自动更新，防止新系统缺组件报错
 # =========================================================
 
 RED='\033[0;31m'
@@ -16,6 +16,50 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# ================= 系统检测函数 =================
+check_update() {
+    echo -e "${YELLOW}>>> [0/4] 正在执行系统预检与更新...${PLAIN}"
+    
+    # 简单的发行版检测
+    if [[ -f /etc/redhat-release ]]; then
+        RELEASE="centos"
+    elif cat /etc/issue | grep -q -E -i "debian"; then
+        RELEASE="debian"
+    elif cat /etc/issue | grep -q -E -i "ubuntu"; then
+        RELEASE="ubuntu"
+    elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
+        RELEASE="centos"
+    elif cat /proc/version | grep -q -E -i "debian"; then
+        RELEASE="debian"
+    elif cat /proc/version | grep -q -E -i "ubuntu"; then
+        RELEASE="ubuntu"
+    elif cat /proc/version | grep -q -E -i "centos|red hat|redhat"; then
+        RELEASE="centos"
+    else
+        RELEASE="unknown"
+    fi
+
+    echo -e "   识别系统: ${GREEN}${RELEASE}${PLAIN}"
+
+    if [[ "${RELEASE}" == "debian" || "${RELEASE}" == "ubuntu" ]]; then
+        echo -e "   正在更新 apt 源并安装依赖工具 (可能需要几十秒)..."
+        apt-get update -y >/dev/null 2>&1
+        # 安装核心依赖：iproute2(ip命令), net-tools, curl, wget, grep, sed, awk
+        apt-get install -y iproute2 net-tools curl wget grep gawk sed >/dev/null 2>&1
+    elif [[ "${RELEASE}" == "centos" ]]; then
+        echo -e "   正在更新 yum 源并安装依赖工具..."
+        yum update -y >/dev/null 2>&1
+        yum install -y epel-release >/dev/null 2>&1
+        yum install -y iproute net-tools curl wget grep gawk sed >/dev/null 2>&1
+    else
+        echo -e "${RED}   [警告] 无法识别系统，跳过自动更新步骤，直接尝试运行...${PLAIN}"
+    fi
+    
+    echo -e "${GREEN}   [完成] 环境预检通过${PLAIN}"
+    echo "----------------------------------------------------"
+}
+
+# ================= 菜单界面 =================
 clear
 echo -e "${YELLOW}==============================================${PLAIN}"
 echo -e "${YELLOW}           欢迎使用 ipv6Anyips 脚本           ${PLAIN}"
@@ -29,6 +73,9 @@ read -p "请输入选项 [1-2]: " choice
 echo ""
 
 install_anyip() {
+    # === 插入 V7.6 新增步骤：检查更新 ===
+    check_update
+    
     echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
 
     echo "-> 正在探测主网卡接口..."
@@ -84,7 +131,7 @@ install_anyip() {
                  echo -e "${YELLOW}   [提示] 尝试自动补全后缀...${PLAIN}"
                  TEST_BIND_IP="${USER_INPUT_CLEAN}::1"
                  ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
-                 ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
+                 ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
              fi
              
              if [ $? -ne 0 ]; then
@@ -122,15 +169,20 @@ install_anyip() {
         echo -e "${GREEN}   [已安装] 跳过安装步骤${PLAIN}"
     else
         echo -e "${YELLOW}   [未安装] 准备安装 ndppd...${PLAIN}"
-        echo "   -> 更新软件源 (apt-get update)..."
-        apt-get update -y >/dev/null 2>&1
-        echo "   -> 安装软件包 (apt-get install)..."
-        apt-get install ndppd -y >/dev/null 2>&1
+        
+        # 根据之前识别的系统安装软件
+        if [[ "${RELEASE}" == "centos" ]]; then
+             yum install -y ndppd >/dev/null 2>&1
+        else
+             # 默认 Debian/Ubuntu
+             apt-get update -y >/dev/null 2>&1
+             apt-get install ndppd -y >/dev/null 2>&1
+        fi
         
         if command -v ndppd &> /dev/null; then
             echo -e "${GREEN}   [成功] ndppd 安装完毕${PLAIN}"
         else
-            echo -e "${RED}   [失败] 安装失败，请检查 apt 源${PLAIN}"
+            echo -e "${RED}   [失败] 安装失败，请检查软件源${PLAIN}"
             exit 1
         fi
     fi
@@ -196,7 +248,7 @@ SERVICE
 
     echo "-> 启动服务 (Start)..."
     
-    # === 核心修复 V7.4: 临时 IP 撤销逻辑 ===
+    # 临时 IP 撤销逻辑
     if [ "$MANUAL_BIND" == "yes" ]; then
         echo -e "${YELLOW}   [处理] 正在移交 IP 管理权给 Systemd...${PLAIN}"
         ip -6 addr del "${RAW_IP}/64" dev "$MAIN_IFACE" >/dev/null 2>&1
@@ -211,7 +263,7 @@ SERVICE
         exit 1
     fi
 
-    # === 核心修复 V7.5: 服务启动后的缓冲等待 ===
+    # 服务启动后的缓冲等待
     echo -e "${YELLOW}   [等待] 正在等待服务网络生效 (5秒)...${PLAIN}"
     sleep 5
 
@@ -249,7 +301,7 @@ SERVICE
             exit 1
         fi
     else
-        echo -e "${YELLOW}本地无v6环境，请开启v6访问或稍后自行验证${PLAIN}"
+        echo -e "${YELLOW}本地无v6环境，请开启v6访问或连接手机热点后自行验证${PLAIN}"
         echo "----------------------------------------------------"
         exit 0
     fi
