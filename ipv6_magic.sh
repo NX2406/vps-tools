@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# =========================================================
+# IPv6 /64 AnyIP 配置脚本 (V7.1 智能输入容错版)
+# 更新：修复手动绑定时输入完整 IP 导致的格式拼接错误
+# =========================================================
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -43,43 +48,59 @@ install_anyip() {
     MANUAL_BIND="no"
 
     if [ -z "$RAW_IP" ]; then
-        echo -e "${YELLOW}   [警告] 网卡上未检测到 /64 IPv6 地址${PLAIN}"
-        echo -e "${YELLOW}   请查看后台是否分配了v6地址，这种情况通常是因为分配了 IP 但未自动配置到系统。${PLAIN}"
+        echo -e "${YELLOW}   [警告] 网卡上未检测到 /64 IPv6 地址！${PLAIN}"
+        echo -e "${YELLOW}   这种情况通常是因为商家分配了 IP 但未自动配置到系统。${PLAIN}"
         echo ""
-        read -p "   请输入分配给您的 /64 前缀 (例如 2605:xx:xx:xx::): " USER_PREFIX_INPUT
+        echo -e "   请输入商家分配给您的 IPv6 地址或前缀"
+        echo -e "   (例如: 2605:xx:4:: 或 2605:xx:4::1 均可)"
+        read -p "   输入: " USER_PREFIX_INPUT
         
-        # 简单的输入清洗：去除 /64 后缀（如果用户填了）和多余空格
-        USER_PREFIX_CLEAN=$(echo "$USER_PREFIX_INPUT" | cut -d'/' -f1 | tr -d ' ')
+        # === 核心修复 V7.1: 智能输入处理 ===
+        # 1. 去除 /64 后缀和空格
+        USER_INPUT_CLEAN=$(echo "$USER_PREFIX_INPUT" | cut -d'/' -f1 | tr -d ' ')
         
-        if [ -z "$USER_PREFIX_CLEAN" ]; then
+        if [ -z "$USER_INPUT_CLEAN" ]; then
             echo -e "${RED}   [错误] 输入为空，脚本退出。${PLAIN}"
             exit 1
         fi
 
         echo "-> 正在尝试临时绑定并测试连通性..."
-        # 构造一个测试 IP (例如 前缀::1)
-        # 修正格式：确保前缀末尾没有冒号，然后再拼 ::1
-        TEMP_PREFIX=$(echo "$USER_PREFIX_CLEAN" | sed 's/:*$//')
-        TEST_BIND_IP="${TEMP_PREFIX}::1"
         
-        # 尝试绑定到网卡
+        # 逻辑分支：智能判断绑定方式
+        # 尝试直接绑定用户输入的地址（假设是完整 IP 或以 :: 结尾的）
+        TEST_BIND_IP="$USER_INPUT_CLEAN"
         ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
+        
+        # 如果上一步失败（状态码非0），说明格式不对（可能是纯前缀 2602:xx:4 没加冒号）
+        if [ $? -ne 0 ]; then
+             echo -e "${YELLOW}   [提示] 尝试自动补全 IP 格式...${PLAIN}"
+             # 尝试补全 ::1
+             TEST_BIND_IP="${USER_INPUT_CLEAN}::1"
+             ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
+             
+             if [ $? -ne 0 ]; then
+                 echo -e "${RED}   [失败] IP 格式错误，无法绑定。请检查输入。${PLAIN}"
+                 exit 1
+             fi
+        fi
         
         # 验证是否通畅
         if ping6 -c 2 -w 2 2001:4860:4860::8888 >/dev/null 2>&1; then
              echo -e "${GREEN}   [成功] 绑定成功且网络已连通！${PLAIN}"
+             # 将绑定成功的这个 IP 赋值给 RAW_IP，以便后续提取前缀
              RAW_IP="$TEST_BIND_IP"
              MANUAL_BIND="yes"
         else
              echo -e "${RED}   [失败] 绑定后无法连接 IPv6 网络。${PLAIN}"
-             echo -e "${RED}   原因可能是：前缀输入错误、商家未下发网关路由、或防火墙拦截。${PLAIN}"
-             # 回滚操作：删除刚才绑定的无效 IP
+             echo -e "${RED}   原因可能是：商家未下发网关路由、或防火墙拦截。${PLAIN}"
+             # 回滚操作
              ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
              exit 1
         fi
     fi
 
-    # 标准化前缀提取逻辑 (兼容自动获取和手动绑定的情况)
+    # 标准化前缀提取逻辑 (兼容所有格式)
+    # 使用 sed 's/:*$//' 确保去除末尾冒号
     IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}' | sed 's/:*$//')
     IPV6_SUBNET="${IPV6_PREFIX}::/64"
     echo -e "${GREEN}   [成功] 目标网段: ${IPV6_SUBNET}${PLAIN}"
@@ -134,11 +155,11 @@ CONF
     echo "-> 生成 Systemd 服务文件..."
     
     # === 构建服务文件 ===
-    # 如果是手动绑定的 IP，需要在服务启动时自动挂载这个 IP，防止重启失效
     BIND_CMD=""
     if [ "$MANUAL_BIND" == "yes" ]; then
-        BIND_CMD="ExecStart=/sbin/ip addr add ${IPV6_SUBNET} dev ${MAIN_IFACE}"
-        echo -e "${BLUE}   [提示] 已将手动绑定的 IP 添加到开机自启配置中${PLAIN}"
+        # 这里的 ${RAW_IP} 是刚才验证成功的那个完整 IP
+        BIND_CMD="ExecStart=/sbin/ip addr add ${RAW_IP}/64 dev ${MAIN_IFACE}"
+        echo -e "${BLUE}   [提示] 已将救砖 IP (${RAW_IP}) 加入开机自启${PLAIN}"
     fi
 
     cat > "$SERVICE_FILE" <<SERVICE
@@ -156,99 +177,4 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 SERVICE
-    echo -e "${GREEN}   [成功] 服务文件已创建${PLAIN}"
-
-    echo "-> 重载 Systemd 配置..."
-    systemctl daemon-reload
-    echo -e "${GREEN}   [成功] 完成${PLAIN}"
-
-    echo "-> 启用 ipv6-anyip 服务..."
-    systemctl enable ipv6-anyip.service >/dev/null 2>&1
-    echo -e "${GREEN}   [成功] 已启用${PLAIN}"
-
-    echo "-> 启动服务 (Start)..."
-    systemctl start ipv6-anyip.service
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}   [成功] 服务启动正常${PLAIN}"
-    else
-        echo -e "${RED}   [失败] 服务启动错误，日志如下：${PLAIN}"
-        systemctl status ipv6-anyip.service --no-pager
-        exit 1
-    fi
-
-    echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
-    
-    RAND_SUFFIX=$(printf '%x' $((RANDOM + 1)))
-    TEST_IP="${IPV6_PREFIX}::${RAND_SUFFIX}"
-    
-    echo "Ping测试目标 (随机生成): $TEST_IP"
-    echo "----------------------------------------------------"
-
-    if ping6 -c 1 -w 2 2001:4860:4860::8888 > /dev/null 2>&1; then
-        echo -e "${GREEN}本地v6网络正常，开始ping...${PLAIN}"
-        echo "----------------------------------------------------"
-        
-        ping6 -c 5 $TEST_IP
-
-        if [ $? -eq 0 ]; then
-            echo "----------------------------------------------------"
-            echo -e "${GREEN}=========================================${PLAIN}"
-            echo -e "${GREEN}      恭喜！脚本执行成功 (Exit 0)        ${PLAIN}"
-            echo -e "${GREEN}      逻辑检测通过：网络已连通           ${PLAIN}"
-            echo -e "${GREEN}=========================================${PLAIN}"
-            
-            echo ""
-            echo -e "${BLUE}everything by 執筆·抒情${PLAIN}"
-            echo ""
-            exit 0
-        else
-            echo "----------------------------------------------------"
-            echo -e "${RED}=========================================${PLAIN}"
-            echo -e "${RED}      警告：脚本执行完成但测试失败       ${PLAIN}"
-            echo -e "${RED}      逻辑检测未通过：Ping 不通          ${PLAIN}"
-            echo -e "${RED}=========================================${PLAIN}"
-            exit 1
-        fi
-    else
-        echo -e "${YELLOW}本地无v6环境，请开启v6访问或连接手机热点后自行验证${PLAIN}"
-        echo "----------------------------------------------------"
-        exit 0
-    fi
-}
-
-uninstall_anyip() {
-    echo -e "${YELLOW}>>> 正在执行卸载操作...${PLAIN}"
-
-    echo "-> 停止路由服务 (ipv6-anyip)..."
-    systemctl stop ipv6-anyip.service 2>/dev/null
-    systemctl disable ipv6-anyip.service 2>/dev/null
-    rm -f /etc/systemd/system/ipv6-anyip.service
-    echo -e "${GREEN}   [成功] 服务文件已移除${PLAIN}"
-
-    echo "-> 停止 NDP 代理 (ndppd)..."
-    systemctl stop ndppd 2>/dev/null
-    systemctl disable ndppd 2>/dev/null
-    rm -f /etc/ndppd.conf
-    echo -e "${GREEN}   [成功] 配置文件已移除${PLAIN}"
-
-    echo "-> 刷新 Systemd 状态..."
-    systemctl daemon-reload
-    
-    echo "----------------------------------------------------"
-    echo -e "${GREEN}卸载完成！所有相关配置和服务已清理干净。${PLAIN}"
-    echo -e "${YELLOW}提示：已安装的 'ndppd' 软件包依然保留，如需彻底删除请手动运行: apt-get remove ndppd${PLAIN}"
-    echo ""
-}
-
-case "$choice" in
-    1)
-        install_anyip
-        ;;
-    2)
-        uninstall_anyip
-        ;;
-    *)
-        echo -e "${RED}错误：无效的选项，脚本退出。${PLAIN}"
-        exit 1
-        ;;
-esac
+    echo -e "${GREEN}   [成功] 服务文件已创建${
