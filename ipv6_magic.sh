@@ -17,7 +17,7 @@ echo -e "${YELLOW}           欢迎使用 ipv6Anyips 脚本           ${PLAIN}"
 echo -e "${YELLOW}==============================================${PLAIN}"
 echo ""
 echo -e "请选择操作："
-echo -e "${GREEN}  1. 开始安装 (配置 AnyIP & NDP)${PLAIN}"
+echo -e "${GREEN}  1. 开始安装 (自动配置 / 救砖绑定)${PLAIN}"
 echo -e "${RED}  2. 一键卸载 (移除所有服务与配置)${PLAIN}"
 echo ""
 read -p "请输入选项 [1-2]: " choice
@@ -37,17 +37,52 @@ install_anyip() {
     fi
 
     echo "-> 正在验证 IPv6 /64 配置..."
+    # 尝试自动获取
     RAW_IP=$(ip -6 addr show dev "$MAIN_IFACE" | grep "/64" | grep "scope global" | head -n 1 | awk '{print $2}' | cut -d'/' -f1)
+    
+    MANUAL_BIND="no"
 
     if [ -z "$RAW_IP" ]; then
-        echo -e "${RED}   [失败] 未找到符合条件的 /64 IPv6 地址${PLAIN}"
-        echo -e "${YELLOW}   提示：请确认 VPS 确实分配了 IPv6 且网卡已启用。${PLAIN}"
-        exit 1
-    else
-        IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}' | sed 's/:*$//')
-        IPV6_SUBNET="${IPV6_PREFIX}::/64"
-        echo -e "${GREEN}   [成功] 目标网段: ${IPV6_SUBNET}${PLAIN}"
+        echo -e "${YELLOW}   [警告] 网卡上未检测到 /64 IPv6 地址${PLAIN}"
+        echo -e "${YELLOW}   请查看后台是否分配了v6地址，这种情况通常是因为分配了 IP 但未自动配置到系统。${PLAIN}"
+        echo ""
+        read -p "   请输入分配给您的 /64 前缀 (例如 2605:xx:xx:xx::): " USER_PREFIX_INPUT
+        
+        # 简单的输入清洗：去除 /64 后缀（如果用户填了）和多余空格
+        USER_PREFIX_CLEAN=$(echo "$USER_PREFIX_INPUT" | cut -d'/' -f1 | tr -d ' ')
+        
+        if [ -z "$USER_PREFIX_CLEAN" ]; then
+            echo -e "${RED}   [错误] 输入为空，脚本退出。${PLAIN}"
+            exit 1
+        fi
+
+        echo "-> 正在尝试临时绑定并测试连通性..."
+        # 构造一个测试 IP (例如 前缀::1)
+        # 修正格式：确保前缀末尾没有冒号，然后再拼 ::1
+        TEMP_PREFIX=$(echo "$USER_PREFIX_CLEAN" | sed 's/:*$//')
+        TEST_BIND_IP="${TEMP_PREFIX}::1"
+        
+        # 尝试绑定到网卡
+        ip -6 addr add "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
+        
+        # 验证是否通畅
+        if ping6 -c 2 -w 2 2001:4860:4860::8888 >/dev/null 2>&1; then
+             echo -e "${GREEN}   [成功] 绑定成功且网络已连通！${PLAIN}"
+             RAW_IP="$TEST_BIND_IP"
+             MANUAL_BIND="yes"
+        else
+             echo -e "${RED}   [失败] 绑定后无法连接 IPv6 网络。${PLAIN}"
+             echo -e "${RED}   原因可能是：前缀输入错误、商家未下发网关路由、或防火墙拦截。${PLAIN}"
+             # 回滚操作：删除刚才绑定的无效 IP
+             ip -6 addr del "${TEST_BIND_IP}/64" dev "$MAIN_IFACE" 2>/dev/null
+             exit 1
+        fi
     fi
+
+    # 标准化前缀提取逻辑 (兼容自动获取和手动绑定的情况)
+    IPV6_PREFIX=$(echo "$RAW_IP" | awk -F: '{print $1":"$2":"$3":"$4}' | sed 's/:*$//')
+    IPV6_SUBNET="${IPV6_PREFIX}::/64"
+    echo -e "${GREEN}   [成功] 目标网段: ${IPV6_SUBNET}${PLAIN}"
     echo "----------------------------------------------------"
 
     echo -e "${YELLOW}>>> [2/4] 配置 NDP 代理 (详细追踪)...${PLAIN}"
@@ -97,6 +132,15 @@ CONF
 
     SERVICE_FILE="/etc/systemd/system/ipv6-anyip.service"
     echo "-> 生成 Systemd 服务文件..."
+    
+    # === 构建服务文件 ===
+    # 如果是手动绑定的 IP，需要在服务启动时自动挂载这个 IP，防止重启失效
+    BIND_CMD=""
+    if [ "$MANUAL_BIND" == "yes" ]; then
+        BIND_CMD="ExecStart=/sbin/ip addr add ${IPV6_SUBNET} dev ${MAIN_IFACE}"
+        echo -e "${BLUE}   [提示] 已将手动绑定的 IP 添加到开机自启配置中${PLAIN}"
+    fi
+
     cat > "$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=IPv6 AnyIP Routing Setup
@@ -105,6 +149,7 @@ After=network.target ndppd.service
 [Service]
 Type=oneshot
 ExecStart=/sbin/sysctl -w net.ipv6.ip_nonlocal_bind=1
+${BIND_CMD}
 ExecStart=/sbin/ip route replace local $IPV6_SUBNET dev lo
 RemainAfterExit=yes
 
