@@ -249,7 +249,7 @@ SERVICE
             exit 1
         fi
     else
-        echo -e "${YELLOW}本地无v6环境，请开启v6访问或连接手机热点后自行验证${PLAIN}"
+        echo -e "${YELLOW}本地无v6环境，请开启v6访问或稍后自行验证${PLAIN}"
         echo "----------------------------------------------------"
         exit 0
     fi
