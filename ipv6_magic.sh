@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-# IPv6 /64 AnyIP 配置脚本 (V7.6 系统预检增强版)
-# 更新：新增系统类型检测与依赖环境自动更新，防止新系统缺组件报错
+# IPv6 /64 AnyIP 配置脚本 (V7.7 透明交互版)
+# 更新：彻底移除静默模式，实时展示系统更新与依赖安装的全过程日志
 # =========================================================
 
 RED='\033[0;31m'
@@ -16,9 +16,9 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# ================= 系统检测函数 =================
+# ================= 系统检测与透明更新函数 =================
 check_update() {
-    echo -e "${YELLOW}>>> [0/4] 正在执行系统预检与更新...${PLAIN}"
+    echo -e "${YELLOW}>>> [0/4] 正在执行系统预检...${PLAIN}"
     
     # 简单的发行版检测
     if [[ -f /etc/redhat-release ]]; then
@@ -40,23 +40,35 @@ check_update() {
     fi
 
     echo -e "   识别系统: ${GREEN}${RELEASE}${PLAIN}"
+    echo "----------------------------------------------------"
 
     if [[ "${RELEASE}" == "debian" || "${RELEASE}" == "ubuntu" ]]; then
-        echo -e "   正在更新 apt 源并安装依赖工具 (可能需要几十秒)..."
-        apt-get update -y >/dev/null 2>&1
-        # 安装核心依赖：iproute2(ip命令), net-tools, curl, wget, grep, sed, awk
-        apt-get install -y iproute2 net-tools curl wget grep gawk sed >/dev/null 2>&1
+        # === 移除 >/dev/null，让用户看到每一行输出 ===
+        echo -e "${BLUE}   [1/2] 正在更新软件源列表 (apt-get update)...${PLAIN}"
+        echo -e "${YELLOW}   (请耐心等待系统连接软件源)${PLAIN}"
+        apt-get update -y
+        
+        echo ""
+        echo -e "${BLUE}   [2/2] 正在检查并安装核心依赖组件...${PLAIN}"
+        echo -e "   目标组件: iproute2, net-tools, curl, wget, grep, gawk, sed"
+        apt-get install -y iproute2 net-tools curl wget grep gawk sed
+
     elif [[ "${RELEASE}" == "centos" ]]; then
-        echo -e "   正在更新 yum 源并安装依赖工具..."
-        yum update -y >/dev/null 2>&1
-        yum install -y epel-release >/dev/null 2>&1
-        yum install -y iproute net-tools curl wget grep gawk sed >/dev/null 2>&1
+        echo -e "${BLUE}   [1/2] 正在更新软件源列表 (yum update)...${PLAIN}"
+        yum update -y
+        
+        echo ""
+        echo -e "${BLUE}   [2/2] 正在安装 EPEL 源及核心依赖...${PLAIN}"
+        yum install -y epel-release
+        yum install -y iproute net-tools curl wget grep gawk sed
     else
         echo -e "${RED}   [警告] 无法识别系统，跳过自动更新步骤，直接尝试运行...${PLAIN}"
     fi
     
-    echo -e "${GREEN}   [完成] 环境预检通过${PLAIN}"
     echo "----------------------------------------------------"
+    echo -e "${GREEN}   [完成] 环境依赖准备就绪！${PLAIN}"
+    echo "----------------------------------------------------"
+    echo ""
 }
 
 # ================= 菜单界面 =================
@@ -73,7 +85,7 @@ read -p "请输入选项 [1-2]: " choice
 echo ""
 
 install_anyip() {
-    # === 插入 V7.6 新增步骤：检查更新 ===
+    # === 执行透明更新预检 ===
     check_update
     
     echo -e "${YELLOW}>>> [1/4] 正在检测网络环境...${PLAIN}"
@@ -170,13 +182,11 @@ install_anyip() {
     else
         echo -e "${YELLOW}   [未安装] 准备安装 ndppd...${PLAIN}"
         
-        # 根据之前识别的系统安装软件
+        # 此处也移除静默，展示 ndppd 安装过程
         if [[ "${RELEASE}" == "centos" ]]; then
-             yum install -y ndppd >/dev/null 2>&1
+             yum install -y ndppd
         else
-             # 默认 Debian/Ubuntu
-             apt-get update -y >/dev/null 2>&1
-             apt-get install ndppd -y >/dev/null 2>&1
+             apt-get install ndppd -y
         fi
         
         if command -v ndppd &> /dev/null; then
