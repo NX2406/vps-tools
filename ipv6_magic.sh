@@ -177,4 +177,99 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 SERVICE
-    echo -e "${GREEN}   [成功] 服务文件已创建${
+    echo -e "${GREEN}   [成功] 服务文件已创建${PLAIN}"
+
+    echo "-> 重载 Systemd 配置..."
+    systemctl daemon-reload
+    echo -e "${GREEN}   [成功] 完成${PLAIN}"
+
+    echo "-> 启用 ipv6-anyip 服务..."
+    systemctl enable ipv6-anyip.service >/dev/null 2>&1
+    echo -e "${GREEN}   [成功] 已启用${PLAIN}"
+
+    echo "-> 启动服务 (Start)..."
+    systemctl start ipv6-anyip.service
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}   [成功] 服务启动正常${PLAIN}"
+    else
+        echo -e "${RED}   [失败] 服务启动错误，日志如下：${PLAIN}"
+        systemctl status ipv6-anyip.service --no-pager
+        exit 1
+    fi
+
+    echo -e "\n${YELLOW}>>> [4/4] 正在验证...${PLAIN}"
+    
+    RAND_SUFFIX=$(printf '%x' $((RANDOM + 1)))
+    TEST_IP="${IPV6_PREFIX}::${RAND_SUFFIX}"
+    
+    echo "Ping测试目标 (随机生成): $TEST_IP"
+    echo "----------------------------------------------------"
+
+    if ping6 -c 1 -w 2 2001:4860:4860::8888 > /dev/null 2>&1; then
+        echo -e "${GREEN}本地v6网络正常，开始ping...${PLAIN}"
+        echo "----------------------------------------------------"
+        
+        ping6 -c 5 $TEST_IP
+
+        if [ $? -eq 0 ]; then
+            echo "----------------------------------------------------"
+            echo -e "${GREEN}=========================================${PLAIN}"
+            echo -e "${GREEN}      恭喜！脚本执行成功 (Exit 0)        ${PLAIN}"
+            echo -e "${GREEN}      逻辑检测通过：网络已连通           ${PLAIN}"
+            echo -e "${GREEN}=========================================${PLAIN}"
+            
+            echo ""
+            echo -e "${BLUE}everything by 執筆·抒情${PLAIN}"
+            echo ""
+            exit 0
+        else
+            echo "----------------------------------------------------"
+            echo -e "${RED}=========================================${PLAIN}"
+            echo -e "${RED}      警告：脚本执行完成但测试失败       ${PLAIN}"
+            echo -e "${RED}      逻辑检测未通过：Ping 不通          ${PLAIN}"
+            echo -e "${RED}=========================================${PLAIN}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}本地无v6环境，请开启v6访问或连接手机热点后自行验证${PLAIN}"
+        echo "----------------------------------------------------"
+        exit 0
+    fi
+}
+
+uninstall_anyip() {
+    echo -e "${YELLOW}>>> 正在执行卸载操作...${PLAIN}"
+
+    echo "-> 停止路由服务 (ipv6-anyip)..."
+    systemctl stop ipv6-anyip.service 2>/dev/null
+    systemctl disable ipv6-anyip.service 2>/dev/null
+    rm -f /etc/systemd/system/ipv6-anyip.service
+    echo -e "${GREEN}   [成功] 服务文件已移除${PLAIN}"
+
+    echo "-> 停止 NDP 代理 (ndppd)..."
+    systemctl stop ndppd 2>/dev/null
+    systemctl disable ndppd 2>/dev/null
+    rm -f /etc/ndppd.conf
+    echo -e "${GREEN}   [成功] 配置文件已移除${PLAIN}"
+
+    echo "-> 刷新 Systemd 状态..."
+    systemctl daemon-reload
+    
+    echo "----------------------------------------------------"
+    echo -e "${GREEN}卸载完成！所有相关配置和服务已清理干净。${PLAIN}"
+    echo -e "${YELLOW}提示：已安装的 'ndppd' 软件包依然保留，如需彻底删除请手动运行: apt-get remove ndppd${PLAIN}"
+    echo ""
+}
+
+case "$choice" in
+    1)
+        install_anyip
+        ;;
+    2)
+        uninstall_anyip
+        ;;
+    *)
+        echo -e "${RED}错误：无效的选项，脚本退出。${PLAIN}"
+        exit 1
+        ;;
+esac
